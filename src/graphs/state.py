@@ -8,6 +8,8 @@ class GlobalState(BaseModel):
     target_word_count: int = Field(default=0, description="用户设定的目标字数")
     plot_scenes: str = Field(default="", description="生成的六个主要情节场景")
     novel_title: str = Field(default="", description="小说标题")
+    image_style: str = Field(default="", description="用户选择的图片风格")
+    image_prompt: str = Field(default="", description="生成的文生图提示词")
     novel_outline: str = Field(default="", description="完整的小说大纲")
     outline_parts: Dict[str, str] = Field(default={}, description="拆分后的大纲各部分")
     chapters: List[str] = Field(default=[], description="创作的六个章节内容")
@@ -19,12 +21,14 @@ class GraphInput(BaseModel):
     """工作流的输入"""
     user_requirement: str = Field(..., description="用户的小说创作需求，包括角色性格、背景信息等")
     target_word_count: int = Field(..., description="用户设定的目标总字数，不超过150万字")
+    image_style: str = Field(default="", description="用户指定的图片风格，如'现代科技风格，冷色调'等")
 
 
 class GraphOutput(BaseModel):
     """工作流的输出"""
     novel_title: str = Field(..., description="小说标题")
     plot_scenes: str = Field(..., description="主要情节场景")
+    image_prompt: str = Field(..., description="生成的文生图提示词，可用于image2.0、香蕉、豆包等模型")
     novel_outline: str = Field(..., description="完整的小说大纲")
     chapters: List[str] = Field(..., description="创作的六个章节内容")
     total_word_count: int = Field(..., description="最终统计的总字数")
@@ -48,6 +52,28 @@ class TitleInput(BaseModel):
 class TitleOutput(BaseModel):
     """标题生成节点输出"""
     novel_title: str = Field(..., description="小说标题")
+
+
+class StyleInput(BaseModel):
+    """风格询问节点输入"""
+    novel_title: str = Field(..., description="小说标题")
+    image_style: str = Field(default="", description="用户指定的图片风格（从GraphInput传入）")
+
+
+class StyleOutput(BaseModel):
+    """风格询问节点输出"""
+    image_style: str = Field(..., description="用户选择的图片风格")
+
+
+class ImagePromptInput(BaseModel):
+    """图片提示词生成节点输入"""
+    novel_title: str = Field(..., description="小说标题")
+    image_style: str = Field(..., description="用户选择的图片风格")
+
+
+class ImagePromptOutput(BaseModel):
+    """图片提示词生成节点输出"""
+    image_prompt: str = Field(..., description="生成的文生图提示词")
 
 
 class OutlineInput(BaseModel):
