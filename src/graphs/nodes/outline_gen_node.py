@@ -14,10 +14,17 @@ def outline_gen_node(
 ) -> OutlineOutput:
     """
     title: 大纲生成
-    desc: 根据标题和情节场景创作包含六个部分的小说大纲
+    desc: 根据标题和情节场景创作包含六个部分的小说大纲，限制总字数不超过150万字
     integrations: 大语言模型
     """
     ctx = runtime.context
+
+    # 字数验证：不超过150万字
+    MAX_WORD_COUNT = 1500000
+    target_word_count = state.target_word_count
+    if target_word_count > MAX_WORD_COUNT:
+        target_word_count = MAX_WORD_COUNT
+        # 字数超过上限时自动调整
 
     # 读取配置文件
     cfg_file = os.path.join(
@@ -33,7 +40,11 @@ def outline_gen_node(
     # 使用Jinja2模板渲染用户提示词
     up_tpl = Template(up)
     user_prompt_content = up_tpl.render(
-        {"novel_title": state.novel_title, "plot_scenes": state.plot_scenes}
+        {
+            "novel_title": state.novel_title,
+            "plot_scenes": state.plot_scenes,
+            "target_word_count": target_word_count,
+        }
     )
 
     # 初始化LLM客户端
@@ -48,7 +59,7 @@ def outline_gen_node(
     # 调用大模型
     response = client.invoke(
         messages=messages,
-        model=llm_config.get("model", "doubao-seed-1-8-251228"),
+        model=llm_config.get("model", "deepseek-v3-2-251201"),
         temperature=llm_config.get("temperature", 0.8),
         max_completion_tokens=llm_config.get("max_completion_tokens", 32768),
     )

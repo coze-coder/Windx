@@ -46,7 +46,7 @@ def plot_design_node(
     # 调用大模型
     response = client.invoke(
         messages=messages,
-        model=llm_config.get("model", "doubao-seed-1-8-251228"),
+        model=llm_config.get("model", "deepseek-v3-2-251201"),
         temperature=llm_config.get("temperature", 0.9),
         max_completion_tokens=llm_config.get("max_completion_tokens", 32768),
     )

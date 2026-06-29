@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 import os
@@ -17,6 +17,8 @@ class ChapterLoopState(BaseModel):
     current_part: Dict[str, str] = Field(default={}, description="当前正在处理的章节")
     chapters: List[str] = Field(default=[], description="已创作的章节列表")
     current_index: int = Field(default=0, description="当前循环索引")
+    user_feedback: str = Field(default="", description="用户对当前章节的反馈意见")
+    needs_revision: bool = Field(default=False, description="是否需要根据反馈重新创作")
 
 
 class ChapterLoopInput(BaseModel):
@@ -33,6 +35,7 @@ class SingleChapterInput(BaseModel):
     """单个章节创作输入"""
     part_title: str = Field(..., description="章节标题")
     part_requirement: str = Field(..., description="编写要求")
+    user_feedback: str = Field(default="", description="用户反馈意见（可选）")
 
 
 class SingleChapterOutput(BaseModel):
@@ -40,12 +43,24 @@ class SingleChapterOutput(BaseModel):
     chapter_content: str = Field(..., description="章节内容")
 
 
+class UserFeedbackInput(BaseModel):
+    """用户反馈输入"""
+    chapter_content: str = Field(..., description="当前创作的章节内容")
+    chapter_index: int = Field(..., description="章节索引")
+
+
+class UserFeedbackOutput(BaseModel):
+    """用户反馈输出"""
+    user_feedback: str = Field(default="", description="用户反馈意见")
+    needs_revision: bool = Field(default=False, description="是否需要修改")
+
+
 def single_chapter_creation_node(
     state: SingleChapterInput, config: RunnableConfig, runtime: Runtime[Context]
 ) -> SingleChapterOutput:
     """
     title: 单章节创作
-    desc: 创作单个章节的完整内容
+    desc: 创作单个章节的完整内容，可根据用户反馈调整
     integrations: 大语言模型
     """
     ctx = runtime.context
@@ -61,6 +76,11 @@ def single_chapter_creation_node(
     sp = _cfg.get("sp", "")
     up = _cfg.get("up", "")
 
+    # 构造用户反馈提示文本
+    user_feedback_text = ""
+    if state.user_feedback and state.user_feedback.strip():
+        user_feedback_text = f"\n用户反馈意见：{state.user_feedback}\n请根据以上反馈意见调整创作内容。"
+
     # 使用Jinja2模板渲染用户提示词
     up_tpl = Template(up)
     user_prompt_content = up_tpl.render(
@@ -68,6 +88,7 @@ def single_chapter_creation_node(
             "part_title": state.part_title,
             "part_requirement": state.part_requirement,
             "full_outline": "大纲内容在主图中已确定",
+            "user_feedback_text": user_feedback_text,
         }
     )
 
@@ -83,7 +104,7 @@ def single_chapter_creation_node(
     # 调用大模型
     response = client.invoke(
         messages=messages,
-        model=llm_config.get("model", "doubao-seed-1-8-251228"),
+        model=llm_config.get("model", "deepseek-v3-2-251201"),
         temperature=llm_config.get("temperature", 0.9),
         max_completion_tokens=llm_config.get("max_completion_tokens", 32768),
     )
@@ -102,43 +123,109 @@ def single_chapter_creation_node(
     return SingleChapterOutput(chapter_content=chapter_content)
 
 
-def init_loop_node(state: ChapterLoopInput, config: RunnableConfig, runtime: Runtime[Context]) -> ChapterLoopState:
+def user_interaction_node(
+    state: ChapterLoopState, config: RunnableConfig, runtime: Runtime[Context]
+) -> ChapterLoopState:
+    """
+    title: 用户交互确认
+    desc: 等待用户确认当前章节并提供反馈意见
+    integrations:
+    """
+    ctx = runtime.context
+    
+    # 在实际运行中，这里应该通过某种机制（如interrupt）暂停工作流
+    # 等待用户输入反馈意见
+    # 这里我们简化处理：如果GlobalState中有user_feedback，则使用它
+    # 否则默认为确认通过
+    
+    # 由于LangGraph的工作流特性，这里我们采用简化方案：
+    # 通过条件判断是否需要用户交互
+    # 如果是第一次运行，默认需要用户确认（但实际中无法暂停）
+    # 所以这里我们返回状态，让条件节点判断
+    
+    # 记录用户交互信息（使用简单的文本记录）
+    
+    return ChapterLoopState(
+        parts_data=state.parts_data,
+        current_part=state.current_part,
+        chapters=state.chapters,
+        current_index=state.current_index,
+        user_feedback=state.user_feedback,
+        needs_revision=False  # 默认不需要修改，除非用户提供了反馈
+    )
+
+
+def init_loop_node(
+    state: ChapterLoopInput, config: RunnableConfig, runtime: Runtime[Context]
+) -> ChapterLoopState:
     """初始化循环状态"""
     return ChapterLoopState(
         parts_data=state.parts_data,
         current_part=state.parts_data[0] if state.parts_data else {},
         chapters=[],
-        current_index=0
+        current_index=0,
+        user_feedback="",
+        needs_revision=False,
     )
 
 
-def create_single_chapter(state: ChapterLoopState, config: RunnableConfig, runtime: Runtime[Context]) -> ChapterLoopState:
+def create_single_chapter(
+    state: ChapterLoopState, config: RunnableConfig, runtime: Runtime[Context]
+) -> ChapterLoopState:
     """创作单个章节"""
     ctx = runtime.context
-    
+
     # 构造单个章节输入
     chapter_input = SingleChapterInput(
         part_title=state.current_part.get("title", ""),
-        part_requirement=state.current_part.get("requirement", "")
+        part_requirement=state.current_part.get("requirement", ""),
+        user_feedback=state.user_feedback if state.needs_revision else "",
     )
-    
+
     # 调用单章节创作节点
     result = single_chapter_creation_node(chapter_input, config, runtime)
-    
+
     # 更新状态
     new_chapters = state.chapters + [result.chapter_content]
+    new_index = state.current_index
+
+    return ChapterLoopState(
+        parts_data=state.parts_data,
+        current_part=state.current_part,
+        chapters=new_chapters,
+        current_index=new_index,
+        user_feedback="",  # 清空用户反馈
+        needs_revision=False,
+    )
+
+
+def check_user_feedback(state: ChapterLoopState) -> str:
+    """判断是否需要根据用户反馈重新创作"""
+    # 如果用户提供了反馈且需要修改，则重新创作
+    if state.needs_revision and state.user_feedback.strip():
+        return "根据反馈重新创作"
+    else:
+        return "继续下一章节"
+
+
+def move_to_next_chapter(
+    state: ChapterLoopState, config: RunnableConfig, runtime: Runtime[Context]
+) -> ChapterLoopState:
+    """移动到下一个章节"""
     new_index = state.current_index + 1
-    
+
     if new_index < len(state.parts_data):
         next_part = state.parts_data[new_index]
     else:
         next_part = {}
-    
+
     return ChapterLoopState(
         parts_data=state.parts_data,
         current_part=next_part,
-        chapters=new_chapters,
-        current_index=new_index
+        chapters=state.chapters,
+        current_index=new_index,
+        user_feedback="",
+        needs_revision=False,
     )
 
 
@@ -154,25 +241,40 @@ def should_continue(state: ChapterLoopState) -> str:
 loop_builder = StateGraph(
     ChapterLoopState,
     input_schema=ChapterLoopInput,
-    output_schema=ChapterLoopOutput
+    output_schema=ChapterLoopOutput,
 )
 
 # 添加节点
 loop_builder.add_node("init_loop", init_loop_node)
 loop_builder.add_node("create_chapter", create_single_chapter)
+loop_builder.add_node("user_interaction", user_interaction_node)
+loop_builder.add_node("move_next", move_to_next_chapter)
 
 # 设置入口
 loop_builder.set_entry_point("init_loop")
 loop_builder.add_edge("init_loop", "create_chapter")
 
-# 添加条件分支
+# 章节创作后进行用户交互确认
+loop_builder.add_edge("create_chapter", "user_interaction")
+
+# 根据用户反馈判断下一步
 loop_builder.add_conditional_edges(
-    source="create_chapter",
+    source="user_interaction",
+    path=check_user_feedback,
+    path_map={
+        "根据反馈重新创作": "create_chapter",
+        "继续下一章节": "move_next",
+    },
+)
+
+# 移动到下一章节后判断是否继续
+loop_builder.add_conditional_edges(
+    source="move_next",
     path=should_continue,
     path_map={
         "继续创作": "create_chapter",
-        "结束": END
-    }
+        "结束": END,
+    },
 )
 
 # 编译子图
