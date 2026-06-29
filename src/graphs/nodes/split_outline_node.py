@@ -43,6 +43,8 @@ def split_outline_node(
     part6_requirement = extract_text(input_text, "第六部分编写要求")
 
     return SplitOutlineOutput(
+        novel_outline=state.novel_outline,
+        target_word_count=state.target_word_count,
         part1_title=part1_title,
         part1_requirement=part1_requirement,
         part2_title=part2_title,

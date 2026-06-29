@@ -91,10 +91,13 @@ class OutlineOutput(BaseModel):
 class SplitOutlineInput(BaseModel):
     """拆分大纲节点输入"""
     novel_outline: str = Field(..., description="完整的小说大纲文本")
+    target_word_count: int = Field(..., description="用户设定的目标总字数")
 
 
 class SplitOutlineOutput(BaseModel):
     """拆分大纲节点输出"""
+    novel_outline: str = Field(..., description="完整的小说大纲")
+    target_word_count: int = Field(..., description="用户设定的目标总字数")
     part1_title: str = Field(default="", description="第一部分大纲标题")
     part1_requirement: str = Field(default="", description="第一部分编写要求")
     part2_title: str = Field(default="", description="第二部分大纲标题")
@@ -139,3 +142,41 @@ class CountWordsInput(BaseModel):
 class CountWordsOutput(BaseModel):
     """统计字数节点输出"""
     total_word_count: int = Field(..., description="总字数统计")
+
+
+class ChapterOutlineGenInput(BaseModel):
+    """章节大纲生成节点输入"""
+    overall_outline: str = Field(..., description="小说总大纲")
+    current_title: str = Field(..., description="当前章节标题")
+    target_word_count: int = Field(..., description="总字数目标")
+
+
+class ChapterOutlineGenOutput(BaseModel):
+    """章节大纲生成节点输出"""
+    chapter_outline: str = Field(..., description="生成的章节大纲JSON字符串")
+
+
+class OutlineCheckInput(BaseModel):
+    """大纲一致性检查节点输入"""
+    overall_outline: str = Field(..., description="小说总大纲")
+    chapter_outline: str = Field(..., description="章节大纲")
+    current_title: str = Field(..., description="当前章节标题")
+
+
+class OutlineCheckOutput(BaseModel):
+    """大纲一致性检查节点输出"""
+    outline_check_result: str = Field(..., description="大纲检查结果JSON字符串")
+
+
+class ContentCheckInput(BaseModel):
+    """内容一致性检查节点输入"""
+    overall_outline: str = Field(..., description="小说总大纲")
+    chapter_outline: str = Field(..., description="章节大纲")
+    current_content: str = Field(..., description="当前章节内容")
+    previous_chapters: str = Field(default="", description="前文内容（之前所有章节）")
+    current_title: str = Field(..., description="当前章节标题")
+
+
+class ContentCheckOutput(BaseModel):
+    """内容一致性检查节点输出"""
+    content_check_result: str = Field(..., description="内容检查结果JSON字符串")

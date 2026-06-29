@@ -25,8 +25,15 @@ def chapter_creation_node(
         {"title": state.part6_title, "requirement": state.part6_requirement},
     ]
 
-    # 调用子图进行章节创作
-    result = chapter_loop_graph.invoke({"parts_data": parts_data})
+    # 调用子图进行章节创作，传递总体大纲和目标字数，增加递归限制
+    result = chapter_loop_graph.invoke(
+        {
+            "parts_data": parts_data,
+            "overall_outline": state.novel_outline,
+            "target_word_count": state.target_word_count,
+        },
+        config={"recursion_limit": 50}
+    )
 
     # 获取创作的章节列表
     chapters_list: list = []

@@ -10,6 +10,11 @@ from coze_coding_utils.runtime_ctx.context import Context
 from coze_coding_dev_sdk import LLMClient
 from langchain_core.messages import SystemMessage, HumanMessage
 
+# 导入新的检查节点
+from graphs.nodes.chapter_outline_gen_node import chapter_outline_gen_node
+from graphs.nodes.outline_check_node import outline_check_node
+from graphs.nodes.content_check_node import content_check_node
+
 
 class ChapterLoopState(BaseModel):
     """章节创作循环子图的状态"""
@@ -19,11 +24,18 @@ class ChapterLoopState(BaseModel):
     current_index: int = Field(default=0, description="当前循环索引")
     user_feedback: str = Field(default="", description="用户对当前章节的反馈意见")
     needs_revision: bool = Field(default=False, description="是否需要根据反馈重新创作")
+    overall_outline: str = Field(default="", description="小说总大纲")
+    target_word_count: int = Field(default=15000, description="总字数目标")
+    chapter_outline: str = Field(default="", description="当前章节的大纲")
+    outline_check_result: str = Field(default="", description="章节大纲检查结果")
+    content_check_result: str = Field(default="", description="章节内容检查结果")
 
 
 class ChapterLoopInput(BaseModel):
     """循环子图输入"""
     parts_data: List[Dict[str, str]] = Field(..., description="六个部分的数据列表")
+    overall_outline: str = Field(..., description="小说总大纲")
+    target_word_count: int = Field(..., description="总字数目标")
 
 
 class ChapterLoopOutput(BaseModel):
@@ -166,6 +178,11 @@ def init_loop_node(
         current_index=0,
         user_feedback="",
         needs_revision=False,
+        overall_outline=state.overall_outline,
+        target_word_count=state.target_word_count,
+        chapter_outline="",
+        outline_check_result="",
+        content_check_result="",
     )
 
 
@@ -226,6 +243,133 @@ def move_to_next_chapter(
         current_index=new_index,
         user_feedback="",
         needs_revision=False,
+        overall_outline=state.overall_outline,
+        target_word_count=state.target_word_count,
+        chapter_outline="",  # 清空章节大纲，准备生成新章节的大纲
+        outline_check_result="",  # 清空检查结果
+        content_check_result="",  # 清空检查结果
+    )
+
+
+def generate_chapter_outline(
+    state: ChapterLoopState, config: RunnableConfig, runtime: Runtime[Context]
+) -> ChapterLoopState:
+    """生成章节大纲"""
+    ctx = runtime.context
+    
+    # 构造输入数据
+    from graphs.state import ChapterOutlineGenInput
+    outline_input = ChapterOutlineGenInput(
+        overall_outline=state.overall_outline,
+        current_title=state.current_part.get("title", ""),
+        target_word_count=state.target_word_count,
+    )
+    
+    # 创建包含metadata的config
+    outline_config = RunnableConfig(
+        metadata={"llm_cfg": "config/chapter_outline_gen_cfg.json"}
+    )
+    
+    # 调用章节大纲生成节点
+    result = chapter_outline_gen_node(outline_input, outline_config, runtime)
+    
+    # 更新状态
+    return ChapterLoopState(
+        parts_data=state.parts_data,
+        current_part=state.current_part,
+        chapters=state.chapters,
+        current_index=state.current_index,
+        user_feedback=state.user_feedback,
+        needs_revision=state.needs_revision,
+        overall_outline=state.overall_outline,
+        target_word_count=state.target_word_count,
+        chapter_outline=result.chapter_outline,
+        outline_check_result=state.outline_check_result,
+        content_check_result=state.content_check_result,
+    )
+
+
+def check_outline_consistency(
+    state: ChapterLoopState, config: RunnableConfig, runtime: Runtime[Context]
+) -> ChapterLoopState:
+    """检查章节大纲一致性"""
+    ctx = runtime.context
+    
+    # 构造输入数据
+    from graphs.state import OutlineCheckInput
+    check_input = OutlineCheckInput(
+        overall_outline=state.overall_outline,
+        chapter_outline=state.chapter_outline,
+        current_title=state.current_part.get("title", ""),
+    )
+    
+    # 创建包含metadata的config
+    check_config = RunnableConfig(
+        metadata={"llm_cfg": "config/outline_check_cfg.json"}
+    )
+    
+    # 调用大纲检查节点
+    result = outline_check_node(check_input, check_config, runtime)
+    
+    # 更新状态
+    return ChapterLoopState(
+        parts_data=state.parts_data,
+        current_part=state.current_part,
+        chapters=state.chapters,
+        current_index=state.current_index,
+        user_feedback=state.user_feedback,
+        needs_revision=state.needs_revision,
+        overall_outline=state.overall_outline,
+        target_word_count=state.target_word_count,
+        chapter_outline=state.chapter_outline,
+        outline_check_result=result.outline_check_result,
+        content_check_result=state.content_check_result,
+    )
+
+
+def check_content_consistency(
+    state: ChapterLoopState, config: RunnableConfig, runtime: Runtime[Context]
+) -> ChapterLoopState:
+    """检查章节内容一致性"""
+    ctx = runtime.context
+    
+    # 获取最新创作的章节内容
+    current_content = state.chapters[-1] if state.chapters else ""
+    
+    # 获取前文内容（之前所有章节）
+    previous_chapters = "\n\n".join(state.chapters[:-1]) if len(state.chapters) > 1 else ""
+    
+    # 构造输入数据
+    from graphs.state import ContentCheckInput
+    check_input = ContentCheckInput(
+        overall_outline=state.overall_outline,
+        chapter_outline=state.chapter_outline,
+        current_content=current_content,
+        previous_chapters=previous_chapters,
+        current_title=state.current_part.get("title", ""),
+    )
+    
+    # 创建包含metadata的config
+    check_config = RunnableConfig(
+        metadata={"llm_cfg": "config/content_check_cfg.json"}
+    )
+    
+    # 调用内容检查节点
+    result = content_check_node(check_input, check_config, runtime)
+    
+    # 更新状态
+    return ChapterLoopState(
+        parts_data=state.parts_data,
+        current_part=state.current_part,
+        chapters=state.chapters,
+        current_index=state.current_index,
+        user_feedback=state.user_feedback,
+        needs_revision=state.needs_revision,
+        overall_outline=state.overall_outline,
+        target_word_count=state.target_word_count,
+        chapter_outline=state.chapter_outline,
+        outline_check_result=state.outline_check_result,
+        content_check_result=result.content_check_result,
     )
 
 
@@ -246,16 +390,28 @@ loop_builder = StateGraph(
 
 # 添加节点
 loop_builder.add_node("init_loop", init_loop_node)
+loop_builder.add_node("generate_outline", generate_chapter_outline)
+loop_builder.add_node("check_outline", check_outline_consistency)
 loop_builder.add_node("create_chapter", create_single_chapter)
+loop_builder.add_node("check_content", check_content_consistency)
 loop_builder.add_node("user_interaction", user_interaction_node)
 loop_builder.add_node("move_next", move_to_next_chapter)
 
 # 设置入口
 loop_builder.set_entry_point("init_loop")
-loop_builder.add_edge("init_loop", "create_chapter")
+loop_builder.add_edge("init_loop", "generate_outline")
 
-# 章节创作后进行用户交互确认
-loop_builder.add_edge("create_chapter", "user_interaction")
+# 章节大纲生成后检查一致性
+loop_builder.add_edge("generate_outline", "check_outline")
+
+# 大纲检查后创作章节
+loop_builder.add_edge("check_outline", "create_chapter")
+
+# 章节创作后检查内容一致性
+loop_builder.add_edge("create_chapter", "check_content")
+
+# 内容检查后进行用户交互确认
+loop_builder.add_edge("check_content", "user_interaction")
 
 # 根据用户反馈判断下一步
 loop_builder.add_conditional_edges(
@@ -272,7 +428,7 @@ loop_builder.add_conditional_edges(
     source="move_next",
     path=should_continue,
     path_map={
-        "继续创作": "create_chapter",
+        "继续创作": "generate_outline",
         "结束": END,
     },
 )
