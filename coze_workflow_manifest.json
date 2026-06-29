@@ -1,0 +1,252 @@
+{
+  "name": "万字小说创作工作流（含上下文检查）",
+  "description": "根据用户需求自动创作完整的万字小说，支持用户自定义字数、章节创作过程中的用户交互确认、文生图提示词生成、上下文一致性检查",
+  "version": "2.0.0",
+  "language": "python",
+  "framework": "langgraph",
+  "entrypoint": "src/main.py",
+  "nodes": [
+    {
+      "name": "plot_design",
+      "type": "agent",
+      "file": "src/graphs/nodes/plot_design_node.py",
+      "config": "config/plot_design_cfg.json",
+      "description": "根据用户需求设计六个主要情节场景"
+    },
+    {
+      "name": "title_gen",
+      "type": "agent",
+      "file": "src/graphs/nodes/title_gen_node.py",
+      "config": "config/title_gen_cfg.json",
+      "description": "根据情节场景生成小说标题"
+    },
+    {
+      "name": "style_input",
+      "type": "task",
+      "file": "src/graphs/nodes/style_input_node.py",
+      "description": "接收用户指定的图片风格"
+    },
+    {
+      "name": "image_prompt_gen",
+      "type": "agent",
+      "file": "src/graphs/nodes/image_prompt_gen_node.py",
+      "config": "config/image_prompt_gen_cfg.json",
+      "description": "生成适用于多个模型的文生图提示词（3:4比例）"
+    },
+    {
+      "name": "outline_gen",
+      "type": "agent",
+      "file": "src/graphs/nodes/outline_gen_node.py",
+      "config": "config/outline_gen_cfg.json",
+      "description": "创作六部分大纲，支持字数限制检查"
+    },
+    {
+      "name": "split_outline",
+      "type": "task",
+      "file": "src/graphs/nodes/split_outline_node.py",
+      "description": "从完整大纲提取各部分标题和要求"
+    },
+    {
+      "name": "chapter_creation",
+      "type": "looparray",
+      "file": "src/graphs/nodes/chapter_creation_node.py",
+      "description": "循环创作六个章节内容（调用子图）",
+      "subgraph": "chapter_loop_graph"
+    },
+    {
+      "name": "count_words",
+      "type": "task",
+      "file": "src/graphs/nodes/count_words_node.py",
+      "description": "统计所有章节的中文字符总数"
+    }
+  ],
+  "subgraphs": [
+    {
+      "name": "chapter_loop_graph",
+      "file": "src/graphs/loop_graph.py",
+      "description": "章节创作循环子图（含上下文检查）",
+      "nodes": [
+        {
+          "name": "init_loop",
+          "type": "task",
+          "description": "初始化循环状态"
+        },
+        {
+          "name": "generate_outline",
+          "type": "task",
+          "description": "生成章节大纲包装节点"
+        },
+        {
+          "name": "check_outline",
+          "type": "task",
+          "description": "检查章节大纲一致性包装节点"
+        },
+        {
+          "name": "create_chapter",
+          "type": "task",
+          "description": "创作单个章节包装节点"
+        },
+        {
+          "name": "check_content",
+          "type": "task",
+          "description": "检查章节内容一致性包装节点"
+        },
+        {
+          "name": "user_interaction",
+          "type": "task",
+          "description": "用户交互确认节点"
+        },
+        {
+          "name": "move_next",
+          "type": "task",
+          "description": "移动到下一个章节"
+        }
+      ]
+    }
+  ],
+  "agent_nodes": [
+    {
+      "name": "chapter_outline_gen_node",
+      "file": "src/graphs/nodes/chapter_outline_gen_node.py",
+      "config": "config/chapter_outline_gen_cfg.json",
+      "description": "生成章节详细大纲（场景、人物、情节）",
+      "temperature": 0.7
+    },
+    {
+      "name": "outline_check_node",
+      "file": "src/graphs/nodes/outline_check_node.py",
+      "config": "config/outline_check_cfg.json",
+      "description": "检查章节大纲与总大纲一致性",
+      "temperature": 0.3
+    },
+    {
+      "name": "content_check_node",
+      "file": "src/graphs/nodes/content_check_node.py",
+      "config": "config/content_check_cfg.json",
+      "description": "检查章节内容一致性和上下文连贯性",
+      "temperature": 0.3
+    },
+    {
+      "name": "single_chapter_creation_node",
+      "file": "src/graphs/loop_graph.py",
+      "config": "config/chapter_creation_cfg.json",
+      "description": "创作单个章节内容",
+      "temperature": 0.9
+    }
+  ],
+  "workflow_flow": [
+    "plot_design",
+    "title_gen",
+    "style_input",
+    "image_prompt_gen",
+    "outline_gen",
+    "split_outline",
+    "chapter_creation",
+    "count_words"
+  ],
+  "subgraph_flow": [
+    "init_loop",
+    "generate_outline",
+    "check_outline",
+    "create_chapter",
+    "check_content",
+    "user_interaction",
+    {
+      "conditional": "check_user_feedback",
+      "branches": {
+        "根据反馈重新创作": "create_chapter",
+        "继续下一章节": "move_next"
+      }
+    },
+    {
+      "conditional": "should_continue",
+      "branches": {
+        "继续创作": "generate_outline",
+        "结束": "END"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "user_requirement",
+      "type": "string",
+      "required": true,
+      "description": "用户的小说创作需求，包括角色性格、背景信息等"
+    },
+    {
+      "name": "target_word_count",
+      "type": "integer",
+      "required": true,
+      "description": "用户设定的目标总字数，不超过150万字",
+      "validation": {
+        "max": 1500000,
+        "message": "字数不能超过150万字"
+      }
+    },
+    {
+      "name": "image_style",
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "用户指定的图片风格，如'现代科技风格，冷色调'等"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "novel_title",
+      "type": "string",
+      "description": "小说标题"
+    },
+    {
+      "name": "plot_scenes",
+      "type": "string",
+      "description": "主要情节场景"
+    },
+    {
+      "name": "image_prompt",
+      "type": "string",
+      "description": "生成的文生图提示词，可用于image2.0、香蕉、豆包等模型"
+    },
+    {
+      "name": "novel_outline",
+      "type": "string",
+      "description": "完整的小说大纲"
+    },
+    {
+      "name": "chapters",
+      "type": "array",
+      "description": "创作的六个章节内容"
+    },
+    {
+      "name": "total_word_count",
+      "type": "integer",
+      "description": "最终统计的总字数"
+    }
+  ],
+  "llm_config": {
+    "provider": "deepseek",
+    "model": "deepseek-v3-2-251201",
+    "features": [
+      "anthropic_thinking_protocol",
+      "streaming_response",
+      "context_window_128k"
+    ]
+  },
+  "dependencies": [
+    "langgraph>=1.0",
+    "langchain>=1.0",
+    "pydantic>=2.0",
+    "jinja2",
+    "coze-coding-dev-sdk"
+  ],
+  "required_files": [
+    "src/graphs/graph.py",
+    "src/graphs/loop_graph.py",
+    "src/graphs/state.py",
+    "src/graphs/nodes/*.py",
+    "config/*.json",
+    "src/main.py",
+    ".coze",
+    "pyproject.toml"
+  ]
+}
